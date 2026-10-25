@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { app } from "./app.js";
+import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { processDueTasks } from "./worker.js";
 
@@ -20,6 +21,29 @@ describe("SafeStride API", () => {
   afterAll(async () => {
     await prisma.user.deleteMany({ where: { email } });
     await prisma.$disconnect();
+  });
+
+  it("allows credentialed CORS preflight only from the configured web origin", async () => {
+    const allowed = await request(app)
+      .options("/api/auth/login")
+      .set("Origin", config.origin)
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "content-type");
+
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers["access-control-allow-origin"]).toBe(config.origin);
+    expect(allowed.headers["access-control-allow-credentials"]).toBe("true");
+    expect(allowed.headers["access-control-allow-methods"]).toContain("POST");
+    expect(allowed.headers["access-control-allow-headers"]).toContain("content-type");
+
+    const rejected = await request(app)
+      .options("/api/auth/login")
+      .set("Origin", `${config.origin}.attacker.invalid`)
+      .set("Access-Control-Request-Method", "POST");
+
+    expect(rejected.status).toBe(204);
+    expect(rejected.headers["access-control-allow-origin"]).toBe(config.origin);
+    expect(rejected.headers["access-control-allow-origin"]).not.toBe(`${config.origin}.attacker.invalid`);
   });
 
   it("requires authentication for private journeys", async () => {

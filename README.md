@@ -78,7 +78,7 @@ Inputs are validated with Zod. The API returns JSON errors with appropriate HTTP
 | `JWT_SECRET` | Random secret of at least 32 characters in production |
 | `API_PORT` | Local API port (default 4000); production uses Render's `PORT` |
 | `PORT` | Supplied by Render in production |
-| `WEB_ORIGIN` | Exact HTTPS frontend origin allowed by credentialed CORS |
+| `WEB_ORIGIN` | Exact HTTPS frontend origin allowed by credentialed CORS (defaults in production to `https://safestride-web.onrender.com`) |
 | `VITE_API_URL` | Public API origin used at frontend build time, without `/api` |
 | `NOTIFICATION_PROVIDER` | Keep `simulated`; no real notification transport is implemented |
 
@@ -106,7 +106,7 @@ Inputs are validated with Zod. The API returns JSON errors with appropriate HTTP
    npm run start --workspace=@safestride/api
    ```
 
-5. Set Render's health-check path to `/api/health`. Set API environment variables in Render's dashboard: `DATABASE_URL` (the managed database's internal URL), `JWT_SECRET` (a newly generated secret of at least 32 characters), `WEB_ORIGIN` (the exact frontend HTTPS origin), `NODE_ENV=production`, and `NOTIFICATION_PROVIDER=simulated`. Render supplies `PORT`; the API uses it in production.
+5. Set Render's health-check path to `/api/health`. Set API environment variables in Render's dashboard: `DATABASE_URL` (the managed database's internal URL), `JWT_SECRET` (a newly generated secret of at least 32 characters), `WEB_ORIGIN=https://safestride-web.onrender.com` (the exact frontend HTTPS origin; this is also the production default), `NODE_ENV=production`, and `NOTIFICATION_PROVIDER=simulated`. Render supplies `PORT`; the API uses it in production.
 
 ### Render Static Site
 
