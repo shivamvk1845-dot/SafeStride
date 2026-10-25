@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { app } from "./app.js";
-import { config } from "./config.js";
+import { config, resolveWebOrigin } from "./config.js";
 import { prisma } from "./db.js";
 import { processDueTasks } from "./worker.js";
 
@@ -21,6 +21,11 @@ describe("SafeStride API", () => {
   afterAll(async () => {
     await prisma.user.deleteMany({ where: { email } });
     await prisma.$disconnect();
+  });
+
+  it("uses the production frontend origin when WEB_ORIGIN is blank", () => {
+    expect(resolveWebOrigin("", true)).toBe("https://safestride-web.onrender.com");
+    expect(resolveWebOrigin("   ", true)).toBe("https://safestride-web.onrender.com");
   });
 
   it("allows credentialed CORS preflight only from the configured web origin", async () => {
