@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getRouteCoordinates, geocodeAddress, replaceMapLayers, type Coordinates } from './mapRouting';
+import { isMapPanelVisible, scheduleMapResize, type MapTab } from './mapLifecycle';
 import { 
   Shield, ShieldAlert, ShieldCheck, AlertTriangle, Phone, 
   MapPin, Clock, Battery, Send, Navigation, Volume2, 
@@ -164,7 +165,7 @@ const PRESETS = [
 
 export default function App() {
   // Navigation / View: 'setup' (default first screen) | 'traveler' | 'guardian'
-  const [activeTab, setActiveTab] = useState('setup');
+  const [activeTab, setActiveTab] = useState<MapTab>('setup');
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [showDemoTools, setShowDemoTools] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -218,6 +219,8 @@ export default function App() {
   const guardianMapRef = useRef<HTMLDivElement | null>(null);
   const travelerMapInstance = useRef<L.Map | null>(null);
   const guardianMapInstance = useRef<L.Map | null>(null);
+  const travelerMapResizeObserver = useRef<ResizeObserver | null>(null);
+  const guardianMapResizeObserver = useRef<ResizeObserver | null>(null);
   const travelerMarkerInstance = useRef<L.Marker | null>(null);
   const guardianMarkerInstance = useRef<L.Marker | null>(null);
   const travelerJourneyLayers = useRef<L.LayerGroup | null>(null);
@@ -479,12 +482,49 @@ export default function App() {
       initMap(guardianMapRef.current, guardianMapInstance, guardianMarkerInstance, guardianJourneyLayers, guardianDemoLayers);
     }
 
-    const timer = window.setTimeout(() => {
-      travelerMapInstance.current?.invalidateSize();
-      guardianMapInstance.current?.invalidateSize();
-    }, 250);
-    return () => window.clearTimeout(timer);
   }, [leafletReady, activeTab]);
+
+  useEffect(() => {
+    const panel = activeTab === 'traveler' || activeTab === 'guardian' ? activeTab : null;
+    if (!panel) return;
+    const map = panel === 'traveler' ? travelerMapInstance.current : guardianMapInstance.current;
+    const container = panel === 'traveler' ? travelerMapRef.current : guardianMapRef.current;
+    if (!map || !container) return;
+
+    let cancelResize = () => {};
+    const resizeWhenVisible = () => {
+      if (container.clientWidth === 0 || container.clientHeight === 0) return;
+      cancelResize();
+      cancelResize = scheduleMapResize(map);
+    };
+    const observer = new ResizeObserver(resizeWhenVisible);
+    observer.observe(container);
+    if (panel === 'traveler') travelerMapResizeObserver.current = observer;
+    else guardianMapResizeObserver.current = observer;
+    resizeWhenVisible();
+
+    return () => {
+      observer.disconnect();
+      cancelResize();
+      if (panel === 'traveler') travelerMapResizeObserver.current = null;
+      else guardianMapResizeObserver.current = null;
+    };
+  }, [activeTab, leafletReady]);
+
+  useEffect(() => () => {
+    travelerMapResizeObserver.current?.disconnect();
+    guardianMapResizeObserver.current?.disconnect();
+    travelerMapInstance.current?.remove();
+    guardianMapInstance.current?.remove();
+    travelerMapInstance.current = null;
+    guardianMapInstance.current = null;
+    travelerMarkerInstance.current = null;
+    guardianMarkerInstance.current = null;
+    travelerJourneyLayers.current = null;
+    guardianJourneyLayers.current = null;
+    travelerDemoLayers.current = null;
+    guardianDemoLayers.current = null;
+  }, []);
 
   useEffect(() => {
     const updateMapLayers = (
@@ -1279,8 +1319,7 @@ export default function App() {
         {/* -------------------------------------------------------------
             PAGE 2: TRAVELER VIEW (Active Journey with Live Free OSM Map)
            ------------------------------------------------------------- */}
-        {activeTab === 'traveler' && (
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 min-h-[600px] animate-fadeIn">
+        <div hidden={!isMapPanelVisible(activeTab, 'traveler')} className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 min-h-[600px] animate-fadeIn">
             
             {/* Left Column (Desktop 5 cols): Journey Status & Controls */}
             <div className="lg:col-span-5 flex flex-col justify-between space-y-4">
@@ -1578,13 +1617,11 @@ export default function App() {
             </div>
 
           </div>
-        )}
 
         {/* -------------------------------------------------------------
             PAGE 3: LOCAL GUARDIAN PREVIEW
            ------------------------------------------------------------- */}
-        {activeTab === 'guardian' && (
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 min-h-[600px] animate-fadeIn">
+        <div hidden={!isMapPanelVisible(activeTab, 'guardian')} className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 min-h-[600px] animate-fadeIn">
             
             {/* Left Column (Desktop 5 cols): Guardian Telemetry & Controls */}
             <div className="lg:col-span-5 flex flex-col justify-between space-y-4">
@@ -1736,7 +1773,6 @@ export default function App() {
             </div>
 
           </div>
-        )}
 
       </main>
 
