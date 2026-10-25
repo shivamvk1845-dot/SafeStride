@@ -1,129 +1,146 @@
 # SafeStride
 
-SafeStride is a journey check-in application with a server-managed safety session, optional location sharing, trusted contacts, and a visibly separated demo mode. It is a support tool, not an emergency service. A browser cannot guarantee GPS tracking when suspended or closed.
+**Live website:** [safestride-web.onrender.com](https://safestride-web.onrender.com/)
 
-## Requirements
+**API health:** [safestride-api.onrender.com/api/health](https://safestride-api.onrender.com/api/health)
 
-- Node.js 20 or newer and npm
-- Docker Desktop only if using the optional PostgreSQL service
+SafeStride is a deployed journey-planning and check-in application designed to support women while travelling. It lets people plan a journey, record check-ins, and optionally share location information with trusted contacts. SafeStride is a support tool, not an emergency service.
 
-## Quick start (SQLite)
+## What the application does
 
-SQLite is the zero-setup development database. It is durable across server restarts and is used by the automated API tests. No SMS credentials or external services are required.
+- Create an account and sign in using a server-managed, HTTP-only session cookie.
+- Plan journeys with start and destination addresses, travel details, an estimated arrival, check-in intervals, and an optional grace period.
+- Record check-ins, delays, arrival, cancellation, and SOS events; view journey history and status.
+- Add trusted contacts and select them for a journey. The application currently records check-in and escalation events but **does not send email, SMS, push notifications, or emergency calls**.
+- Optionally share browser location with a journey. Location access requires browser permission and is not guaranteed while the page or browser is suspended or closed.
+- Share a journey using a limited, expiring link, or view a journey through an authorized guardian route.
+- Preview address locations and routes on a map using OpenStreetMap services. Address lookup and route requests require an internet connection and may fail.
+- Use a clearly labeled, opt-in demo simulation for sample route progress and simulated journey events. Demo places are illustrative, unverified examples and are shown only in demo mode.
 
-1. Install dependencies: `npm install`
-2. Generate the Prisma client: `npm run db:generate`
-3. Apply the local schema: `npm run db:migrate -- --name init`
-4. Add a sample account and trusted contact: `npm run db:seed`
-5. Start API and web app: `npm run dev`
-6. Open <http://localhost:5173>. The API health check is <http://localhost:4000/api/health>.
-7. Run `npm test`, `npm run test --workspace=@safestride/web`, and `npm run build`.
+## Using the live application
 
-The checked-in `.env.example` and `apps/api/.env.example` contain placeholders. For local use, copy the API example to `apps/api/.env`; keep its `DATABASE_URL` as `file:./dev.db`. The root example is for frontend build settings. Never use the example JWT secret in production.
+1. Visit the [SafeStride website](https://safestride-web.onrender.com/).
+2. Create an account or sign in.
+3. Plan a journey and choose whether to enable location sharing. Add trusted contacts if useful; no messages are sent to them by this application.
+4. Use the journey page to check in, report a delay, mark arrival, or record an SOS event.
 
-Demo sign-in: `demo@safestride.example` / `SafeStrideDemo2026!`. Demo journeys are labeled and never send real notifications.
-Do not run the demo seed command in production; it creates this known demo account.
+If you are in immediate danger, contact your local emergency services directly. SafeStride does not dispatch help, monitor journeys continuously, or guarantee delivery of alerts. Browser GPS may stop when the page is suspended or closed.
 
-## PostgreSQL
+## Technology and deployment
 
-The PostgreSQL schema and migration history are separate from the SQLite development database. Do not apply `prisma/migrations` to PostgreSQL. For a local PostgreSQL service, install and start Docker Desktop, then run from the project root:
+- **Frontend:** React, TypeScript, Vite, React Router, Leaflet, and OpenStreetMap tiles.
+- **API:** Node.js, Express, TypeScript, Zod validation, bcrypt password hashing, HTTP-only cookie sessions, CORS, Helmet, and rate limiting.
+- **Persistence:** Prisma with PostgreSQL for production and SQLite for local development and API tests. PostgreSQL has a separate Prisma schema and migration history.
+- **Maps:** Leaflet with public OpenStreetMap tiles, Nominatim address lookup, and the public `routing.openstreetmap.de` routing service. These third-party services have their own availability and usage limits; no map API key is configured by this project.
+- **Hosting:** The frontend is a Render Static Site; the API is a Render Web Service backed by managed PostgreSQL. The API runs the scheduled check-in worker in-process.
 
-```powershell
+The frontend sends credentialed requests to the API origin configured at build time by `VITE_API_URL` (without `/api`). The API allows the exact web origin through credentialed CORS. Production sessions rely on the secure cross-origin HTTP-only cookie.
+
+### Current limitations
+
+- No email, SMS, push-notification provider, or emergency-service integration is implemented. Check-in and escalation records are not proof that a trusted contact was notified.
+- The scheduled-task worker runs inside the API process. A sleeping service can delay processing, and multiple API instances can process work inconsistently; production should use one continuously running API instance unless the worker architecture is changed.
+- Browser location requires explicit permission and an active page. Background GPS is not guaranteed when a browser or device suspends or closes the page.
+- Map geocoding, routing, and tiles depend on public OpenStreetMap services and are not guaranteed to be available.
+- Demo safe-place markers are illustrative only, are not verified or endorsed, and must not be used as emergency-service information.
+- The health endpoint checks API availability; it does not confirm database readiness.
+
+## Local Development
+
+### Requirements
+
+- Node.js 20 or newer and npm.
+- SQLite is used by default for local development and automated API tests. Docker Desktop is only needed if you choose to run the optional local PostgreSQL service.
+
+### Setup with SQLite
+
+1. Install dependencies from the repository root:
+
+   ```sh
+   npm ci
+   ```
+
+2. Configure the API's local environment with `DATABASE_URL=file:./dev.db` and a local `JWT_SECRET`. Do not reuse development secrets in production.
+3. Generate the SQLite Prisma client and apply the local migration:
+
+   ```sh
+   npm run db:generate
+   npm run db:migrate -- --name init
+   ```
+
+4. Start the API and frontend:
+
+   ```sh
+   npm run dev
+   ```
+
+5. Open <http://localhost:5173>. The API health endpoint is <http://localhost:4000/api/health>. Register a local account through the app. `npm run db:seed` is an optional local-only demo seed; do not run it against production.
+6. Run the checks:
+
+   ```sh
+   npm test
+   npm run test --workspace=@safestride/web
+   npm run build
+   ```
+
+### Optional local PostgreSQL
+
+Production uses PostgreSQL; SQLite is the default for local development and tests. The PostgreSQL Prisma schema and migrations are separate from SQLite's. To run PostgreSQL locally with the repository's Compose service:
+
+```sh
 docker compose up -d postgres
-$env:DATABASE_URL = "postgresql://safestride:safestride_local@localhost:5432/safestride?schema=public"
+```
+
+Set `DATABASE_URL` to the local PostgreSQL connection string, then use the PostgreSQL-specific Prisma commands:
+
+```sh
 npm run db:generate:postgres --workspace=@safestride/api
 npm run db:migrate:postgres:dev --workspace=@safestride/api -- --name init
 ```
 
-The initial PostgreSQL migration is in `apps/api/prisma/migrations-postgresql`. The default `db:generate` and `db:migrate` scripts continue to use SQLite. `DATABASE_URL` must point to the same PostgreSQL database for client generation and migration commands. The local Compose credentials are for localhost development only.
+Do not apply the SQLite migration history to PostgreSQL. No SQLite data is automatically copied to PostgreSQL.
 
-## Application features
+### Environment variable reference
 
-- Server-side registration/login with salted bcrypt hashes, an HTTP-only session cookie (`SameSite=None; Secure` for the cross-origin production frontend), exact-origin credentialed CORS, input validation, rate limiting, secure headers, and owner-scoped APIs.
-- Journey start, persisted check-ins and delays, safe arrival/cancellation, SOS event recording, optional GPS capture, recent journey history, and a last-known-position map using OpenStreetMap.
-- Starting and destination addresses are resolved with the public OpenStreetMap Nominatim service, and route previews use the public OpenStreetMap routing service. These services require internet access, no API key, and are not guaranteed; lookup or routing failures are shown instead of drawing a fabricated route.
-- Durable database-backed scheduled tasks for check-in reminders and grace-period escalation; the API worker polls tasks after startup and records unique notification attempts.
-- Trusted contact selection, authorization on guardian views, expiring/revocable SHA-256-hashed share links, and minimum-data public share responses.
-- Demo-only simulated check-in due, escalation, SOS, and arrival actions. Simulated events are identified as such and never contact emergency services.
-- User profile, location-consent preference, contact management, and account deletion.
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | SQLite connection string for local development or PostgreSQL connection string for production. |
+| `JWT_SECRET` | Session-signing secret; production requires at least 32 characters. |
+| `API_PORT` | Local API port; defaults to `4000`. Render supplies `PORT` in production. |
+| `PORT` | API listening port supplied by Render. |
+| `WEB_ORIGIN` | Exact frontend origin allowed by credentialed API CORS. Production defaults to `https://safestride-web.onrender.com`. |
+| `VITE_API_URL` | Frontend build-time API origin, without the `/api` path. |
+| `NOTIFICATION_PROVIDER` | Must remain `simulated`; no external notification transport is implemented. |
 
-The current notification provider is intentionally `simulated` (or `in-app`) so local development and tests cannot send real messages. SMS transport is not activated by this starter; production SMS requires an explicitly configured provider adapter and credentials. No emergency call is ever made by the app. Notification records describe simulated attempts, not confirmed delivery.
+### Render deployment architecture
+
+The production deployment consists of a Render Static Site publishing `apps/web/dist`, a Render Web Service running `apps/api`, and a managed PostgreSQL database. For a new deployment, use the repository root as the service root and configure:
+
+- **API build:** `npm ci --include=dev && npm run db:generate:postgres --workspace=@safestride/api && npm run build --workspace=@safestride/api && npm prune --omit=dev`
+- **API pre-deploy migration:** `npm ci --include=dev && npm run db:migrate:postgres:deploy --workspace=@safestride/api`
+- **API start:** `npm run start --workspace=@safestride/api`
+- **API health check:** `/api/health`
+- **Frontend build:** `npm ci --include=dev && npm run build --workspace=@safestride/web`
+- **Frontend publish directory:** `apps/web/dist`
+
+Configure production environment variables in the hosting provider's dashboard. Use the managed database URL, a newly generated `JWT_SECRET`, `NODE_ENV=production`, `WEB_ORIGIN` set to the exact frontend HTTPS origin, and `NOTIFICATION_PROVIDER=simulated`. Set `VITE_API_URL` to the API HTTPS origin in the frontend build environment and rebuild the static site when it changes. Keep secrets in the provider's secret settings, not in source control. Use the PostgreSQL-specific migration command for production; do not run `migrate dev` there.
 
 ## API overview
 
-All routes are under `/api`. Private endpoints require the session cookie.
+All API paths are under `/api`. Private endpoints require the session cookie.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/health` | API health |
-| POST | `/auth/register`, `/auth/login`, `/auth/logout` | Account and session |
-| GET | `/auth/me`, PATCH/DELETE `/users/me` | Current profile and account |
-| GET/POST | `/contacts` | List or add trusted contacts |
-| DELETE | `/contacts/:id` | Remove an owned contact |
-| GET/POST | `/journeys` | History or start a journey |
-| GET | `/journeys/active`, `/journeys/:id` | Active journey and details |
-| POST | `/journeys/:id/check-in`, `/delay`, `/arrive`, `/cancel`, `/sos` | Journey actions |
-| POST | `/journeys/:id/location` | Record a consented location |
-| POST/DELETE | `/journeys/:id/share` | Create or revoke share links |
-| GET | `/guardian/:id` | Trusted-contact-only journey view |
-| GET | `/share/:token` | Limited, expiring share view |
-| POST | `/demo/:id/:action`, `/demo/reset` | Demo-only simulation actions |
-
-Inputs are validated with Zod. The API returns JSON errors with appropriate HTTP status codes.
-
-## Environment variables
-
-| Variable | Description |
-| --- | --- |
-| `DATABASE_URL` | SQLite URL for local work or PostgreSQL URL for deployment |
-| `JWT_SECRET` | Random secret of at least 32 characters in production |
-| `API_PORT` | Local API port (default 4000); production uses Render's `PORT` |
-| `PORT` | Supplied by Render in production |
-| `WEB_ORIGIN` | Exact HTTPS frontend origin allowed by credentialed CORS (defaults in production to `https://safestride-web.onrender.com`) |
-| `VITE_API_URL` | Public API origin used at frontend build time, without `/api` |
-| `NOTIFICATION_PROVIDER` | Keep `simulated`; no real notification transport is implemented |
-
-## Production deployment notes
-
-### Render API web service
-
-1. Create a managed PostgreSQL database and a Render Web Service connected to the GitHub repository. Use the repository root as the service root.
-2. Configure the API build command:
-
-   ```text
-   npm ci --include=dev && npm run db:generate:postgres --workspace=@safestride/api && npm run build --workspace=@safestride/api && npm prune --omit=dev
-   ```
-
-3. Configure the pre-deploy command:
-
-   ```text
-   npm ci --include=dev && npm run db:migrate:postgres:deploy --workspace=@safestride/api
-   ```
-
-   This installs the Prisma CLI needed for migrations in Render's separate pre-deploy environment and applies only the PostgreSQL migration history. Do not run `migrate dev` in production.
-4. Configure the start command:
-
-   ```text
-   npm run start --workspace=@safestride/api
-   ```
-
-5. Set Render's health-check path to `/api/health`. Set API environment variables in Render's dashboard: `DATABASE_URL` (the managed database's internal URL), `JWT_SECRET` (a newly generated secret of at least 32 characters), `WEB_ORIGIN=https://safestride-web.onrender.com` (the exact frontend HTTPS origin; this is also the production default), `NODE_ENV=production`, and `NOTIFICATION_PROVIDER=simulated`. Render supplies `PORT`; the API uses it in production.
-
-### Render Static Site
-
-1. Create a Static Site from the same repository, using the repository root as the service root.
-2. Set the build command to:
-
-   ```text
-   npm ci --include=dev && npm run build --workspace=@safestride/web
-   ```
-
-3. Set the publish directory to `apps/web/dist`.
-4. Set `VITE_API_URL` to the API's HTTPS origin (for example, `https://safestride-api.onrender.com`, without `/api`) in the Static Site's build environment, then trigger a fresh deploy. This variable is public and is embedded in the built frontend.
-5. Set the API's `WEB_ORIGIN` to the Static Site's exact origin, including `https://` and no trailing path. Verify that the browser accepts the secure, `SameSite=Strict` session cookie for the chosen frontend/API hostnames.
-
-Keep the API on one always-running instance: scheduled check-in processing currently runs as an in-process worker, so sleeping or multiple API instances can delay or duplicate work. Confirm database backups and restore procedures before storing production data. The `/api/health` endpoint checks that the API responds, not database readiness.
-
-The PostgreSQL Prisma schema is `apps/api/prisma/schema.postgresql.prisma`, with its independent migrations in `apps/api/prisma/migrations-postgresql`. No SQLite data is automatically copied to PostgreSQL. Production registration and journey data will start empty unless you separately plan and verify a data import.
-
-All SOS and escalation notifications remain simulated/in-app. The application does not send SMS or contact emergency services.
+| POST | `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` | Account and session |
+| GET | `/api/auth/me`, PATCH/DELETE `/api/users/me` | Current profile and account |
+| GET/POST | `/api/contacts` | List or add trusted contacts |
+| DELETE | `/api/contacts/:id` | Remove an owned contact |
+| GET/POST | `/api/journeys` | Journey history or start a journey |
+| GET | `/api/journeys/active`, `/api/journeys/:id` | Active journey and details |
+| POST | `/api/journeys/:id/check-in`, `/delay`, `/arrive`, `/cancel`, `/sos` | Journey actions |
+| POST | `/api/journeys/:id/location` | Record a consented location |
+| POST/DELETE | `/api/journeys/:id/share` | Create or revoke share links |
+| GET | `/api/guardian/:id` | Authorized guardian journey view |
+| GET | `/api/share/:token` | Limited, expiring share view |
+| POST | `/api/demo/:id/:action`, `/api/demo/reset` | Demo-only simulation actions |

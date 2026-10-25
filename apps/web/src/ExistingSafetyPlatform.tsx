@@ -126,7 +126,7 @@ const SAFE_HAVENS = [
   { id: 3, name: 'All-Night Fuel Station & Well-lit Mart', lat: 12.9680, lng: 77.6530, type: 'safezone', dist: '750m' },
 ];
 
-// Presets for rapid test setup
+// Example journeys available when a user chooses to apply a preset.
 const PRESETS = [
   {
     name: 'Late Night Cab',
@@ -171,10 +171,10 @@ export default function App() {
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Journey Setup Parameters (User can configure in Setup screen)
-  const [origin, setOrigin] = useState('Sony World Signal, 80ft Road');
-  const [destination, setDestination] = useState('Hostel Block B (Tech Park Gate 3)');
+  const [origin, setOrigin] = useState('');
+  const [destination, setDestination] = useState('');
   const [transitType, setTransitType] = useState<'cab' | 'walk' | 'bus'>('cab');
-  const [vehiclePlate, setVehiclePlate] = useState('KA 05 MN 9214 • White Sedan');
+  const [vehiclePlate, setVehiclePlate] = useState('');
   const [tripMinutes, setTripMinutes] = useState(25);
   const [checkInMinutes, setCheckInMinutes] = useState(8);
   const [guardianName, setGuardianName] = useState('');
@@ -182,7 +182,7 @@ export default function App() {
   const [guardianEmail, setGuardianEmail] = useState('');
   const [trustedContacts, setTrustedContacts] = useState<TrustedContact[]>([]);
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
-  const [demoMode, setDemoMode] = useState(true);
+  const [demoMode, setDemoMode] = useState(false);
   const [locationSharing, setLocationSharing] = useState(false);
   const [apiJourneyId, setApiJourneyId] = useState<string | null>(null);
   const [apiError, setApiError] = useState('');
@@ -710,7 +710,7 @@ export default function App() {
       setJourneyState('running');
       setActiveTab('traveler');
       setDemoMode(forceDemo);
-      addEvent(`Protected ${forceDemo ? 'demo' : 'journey'} session started to ${destination}.`, 'info');
+      addEvent(`${forceDemo ? 'Demo journey' : 'Journey'} started to ${destination}.`, 'info');
       if (!isAudioMuted) audioFX.playChime();
       return journey.id;
     } catch (error) {
@@ -721,9 +721,19 @@ export default function App() {
     }
   };
 
+  const openJourneyView = (tab: 'traveler' | 'guardian') => {
+    if (journeyState !== 'idle') {
+      setActiveTab(tab);
+      return;
+    }
+    void handleStartSession().then((journeyId) => {
+      if (journeyId) setActiveTab(tab);
+    });
+  };
+
   const handleDemoAction = async (action: 'due' | 'escalate' | 'sos' | 'arrive') => {
     if (apiJourneyId && !demoMode) {
-      setApiError('Judge Simulator actions are only available for a demo journey.');
+      setApiError('Simulation actions are only available for a demo journey.');
       return;
     }
     const id = apiJourneyId ?? await handleStartSession(true);
@@ -882,7 +892,7 @@ export default function App() {
                   REIMAGINE EVERYDAY SAFETY
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 leading-none">Continuous Journey Guard</p>
+              <p className="text-[11px] text-slate-400 leading-none">Journey planning and check-ins</p>
             </div>
           </div>
 
@@ -901,10 +911,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => {
-                if (journeyState === 'idle') handleStartSession();
-                setActiveTab('traveler');
-              }}
+              onClick={() => openJourneyView('traveler')}
               className={`px-3 sm:px-4 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition ${
                 activeTab === 'traveler'
                   ? 'bg-teal-500 text-slate-950 shadow-md font-bold'
@@ -915,10 +922,7 @@ export default function App() {
               <span>Traveler Map</span>
             </button>
             <button
-              onClick={() => {
-                if (journeyState === 'idle') handleStartSession();
-                setActiveTab('guardian');
-              }}
+              onClick={() => openJourneyView('guardian')}
               className={`px-3 sm:px-4 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition ${
                 activeTab === 'guardian'
                   ? 'bg-indigo-500 text-white shadow-md font-bold'
@@ -930,10 +934,10 @@ export default function App() {
             </button>
           </div>
 
-          {/* Utilities & Judge Simulation Drawer Toggle */}
+          {/* Journey simulation controls */}
           <div className="flex items-center space-x-2">
             <span className={`hidden md:inline-flex items-center px-2 py-1 rounded-full text-[9px] font-bold border ${demoMode ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
-              {demoMode ? 'DEMO MODE' : 'LIVE SESSION'}
+              {demoMode ? 'DEMO MODE' : 'STANDARD MODE'}
             </span>
             <button
               onClick={() => setIsAudioMuted(!isAudioMuted)}
@@ -953,7 +957,7 @@ export default function App() {
               </button>
             )}
 
-            {/* Hackathon Judge Toolbar Pill */}
+            {/* Journey simulation controls */}
             <button
               onClick={() => setShowDemoTools(!showDemoTools)}
               className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center space-x-1.5 transition ${
@@ -963,7 +967,7 @@ export default function App() {
               }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-teal-300" />
-              <span className="hidden sm:inline">Judge Simulator</span>
+              <span className="hidden sm:inline">Simulation tools</span>
               <span className="sm:hidden">Demo</span>
             </button>
           </div>
@@ -978,15 +982,15 @@ export default function App() {
       )}
 
       {/* ==============================================================
-          HACKATHON JUDGE / EVALUATOR QUICK CONTROLLER TRAY
+          JOURNEY SIMULATION CONTROLS
          ============================================================== */}
       {showDemoTools && (
         <div className="bg-slate-900 border-b border-teal-500/40 px-4 py-3 shadow-2xl animate-fadeIn">
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs">
             <div className="flex items-center space-x-2">
               <Sparkles className="w-4 h-4 text-teal-400 animate-pulse" />
-              <span className="font-bold text-white">Judge Demo Controls:</span>
-              <span className="text-slate-400">Instantly test safety edge-cases and states:</span>
+              <span className="font-bold text-white">Demo controls:</span>
+              <span className="text-slate-400">Simulate check-ins and journey events. No messages are sent.</span>
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -1027,7 +1031,7 @@ export default function App() {
                 }}
                 className="px-3 py-1.5 rounded-xl bg-rose-700 hover:bg-rose-600 text-white font-bold"
               >
-                🆘 Force SOS
+                🆘 Simulate SOS
               </button>
               <button
                 onClick={() => {
@@ -1064,13 +1068,13 @@ export default function App() {
             <div className="text-center space-y-1.5 pt-2">
               <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-teal-500/10 border border-teal-500/20 text-teal-400 text-xs font-semibold">
                 <ShieldCheck className="w-4 h-4" />
-                <span>Continuous Protection Workflow</span>
+                <span>Journey check-in support</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Plan Your Protected Journey
+                Plan a Journey
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto">
-                Set a destination and planned arrival time. SafeStride schedules check-ins against that plan; optional browser location sharing updates your position while this page is active. Notifications are simulated, not SMS.
+                Set a destination and planned arrival time. SafeStride records check-ins against that plan; optional browser location sharing updates your position only while this page is active. No messages are sent to trusted contacts.
               </p>
             </div>
 
@@ -1113,7 +1117,7 @@ export default function App() {
                     type="text"
                     value={origin}
                     onChange={(e) => setOrigin(e.target.value)}
-                    placeholder="e.g. Sony World Signal, 80ft Road"
+                    placeholder="Enter a starting address"
                     className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-600 outline-none transition"
                   />
                 </div>
@@ -1127,7 +1131,7 @@ export default function App() {
                     type="text"
                     value={destination}
                     onChange={(e) => setDestination(e.target.value)}
-                    placeholder="e.g. University Hostel Block B / Apartment"
+                    placeholder="Enter a destination"
                     className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-600 outline-none transition"
                   />
                 </div>
@@ -1287,7 +1291,7 @@ export default function App() {
               <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
                 <label className="flex items-start gap-2 text-xs text-slate-200">
                   <input type="checkbox" checked={demoMode} onChange={(event) => setDemoMode(event.target.checked)} className="mt-0.5 accent-teal-400" />
-                  <span><b className="text-amber-300">Demo simulation</b><span className="block text-[10px] text-slate-400">Simulated route and Judge Simulator actions. No real contacts or emergency services are contacted.</span></span>
+                  <span><b className="text-amber-300">Demo simulation</b><span className="block text-[10px] text-slate-400">Opt in to simulated route progress and demo controls. No messages or emergency services are involved.</span></span>
                 </label>
                 <label className="flex items-start gap-2 text-xs text-slate-200">
                   <input type="checkbox" checked={locationSharing} onChange={(event) => setLocationSharing(event.target.checked)} className="mt-0.5 accent-teal-400" />
@@ -1304,10 +1308,10 @@ export default function App() {
                   className="w-full h-14 rounded-2xl bg-teal-400 hover:bg-teal-300 active:scale-[0.98] text-slate-950 font-black text-sm sm:text-base shadow-xl shadow-teal-500/25 flex items-center justify-center space-x-2 transition"
                 >
                   <ShieldCheck className="w-5 h-5 stroke-[2.5]" />
-                  <span>{apiBusy ? 'STARTING…' : 'START PROTECTED JOURNEY'}</span>
+                  <span>{apiBusy ? 'STARTING…' : 'START JOURNEY'}</span>
                 </button>
                 <p className="text-[11px] text-center text-slate-400 mt-2">
-                  The server schedules reminders. Browser location is optional; SMS delivery is not enabled.
+                  Check-in events are recorded by the app. Browser location is optional; no email or SMS is sent.
                 </p>
               </div>
 
@@ -1356,7 +1360,7 @@ export default function App() {
                       'bg-emerald-400'
                     }`} />
                     <span>
-                      {journeyState === 'running' && 'Active Journey Guard'}
+                      {journeyState === 'running' && 'Journey in Progress'}
                       {journeyState === 'checkin_due' && 'Check-in Due'}
                       {journeyState === 'grace_period' && `Awaiting Response (${graceSecondsLeft}s)`}
                       {journeyState === 'escalated' && (demoMode ? 'Demo Escalation Simulated' : 'Escalation Recorded (SMS not enabled)')}
@@ -1750,7 +1754,7 @@ export default function App() {
 
             </div>
 
-            {/* Right Column (Desktop 7 cols): Live OSM Map for Guardian */}
+            {/* Right Column (Desktop 7 cols): Guardian journey map */}
             <div className="lg:col-span-7 flex flex-col space-y-4">
               <div className="relative flex-1 min-h-[380px] lg:min-h-[520px] rounded-3xl overflow-hidden border border-slate-800 bg-slate-900 shadow-xl">
                 
