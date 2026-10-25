@@ -10,6 +10,9 @@
     "test": "vitest run",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:generate:postgres": "prisma generate --config prisma.postgresql.config.ts",
+    "db:migrate:postgres:dev": "prisma migrate dev --config prisma.postgresql.config.ts",
+    "db:migrate:postgres:deploy": "prisma migrate deploy --config prisma.postgresql.config.ts",
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {

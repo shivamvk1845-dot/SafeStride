@@ -4,7 +4,7 @@ import { prisma } from "./db.js";
 import { processDueTasks } from "./worker.js";
 
 const server = app.listen(config.port, () => {
-  console.info(`SafeStride API listening on http://localhost:${config.port}`);
+  console.info(`SafeStride API listening on port ${config.port}`);
 });
 
 const worker = setInterval(() => {

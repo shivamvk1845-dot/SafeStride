@@ -10,7 +10,7 @@ if (process.env.NODE_ENV === "production" && (!secret || secret.length < 32)) {
 }
 
 export const config = {
-  port: Number(process.env.API_PORT ?? 4000),
+  port: Number(process.env.NODE_ENV === "production" ? process.env.PORT ?? 4000 : process.env.API_PORT ?? 4000),
   origin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
   jwtSecret: secret ?? "local-development-secret-change-before-deploy-123456",
   notificationProvider: process.env.NOTIFICATION_PROVIDER ?? "simulated",

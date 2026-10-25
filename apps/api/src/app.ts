@@ -13,6 +13,7 @@ import { prisma } from "./db.js";
 export const app = express();
 
 app.disable("x-powered-by");
+if (config.production) app.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors({ origin: config.origin, credentials: true }));
 app.use(express.json({ limit: "32kb" }));
