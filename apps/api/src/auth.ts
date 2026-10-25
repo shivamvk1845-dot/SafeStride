@@ -5,6 +5,15 @@ import { config } from "./config.js";
 const cookieName = "safestride_session";
 type Session = { sub: string; exp: number };
 
+export function sessionCookieOptions(production: boolean) {
+  return {
+    httpOnly: true,
+    sameSite: production ? "none" as const : "strict" as const,
+    secure: production,
+    path: "/",
+  };
+}
+
 function sign(payload: string): string {
   return createHmac("sha256", config.jwtSecret).update(payload).digest("base64url");
 }
@@ -52,14 +61,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 
 export function setSessionCookie(res: Response, userId: string): void {
   res.cookie(cookieName, createSession(userId), {
-    httpOnly: true,
-    sameSite: "strict",
-    secure: config.production,
-    path: "/",
+    ...sessionCookieOptions(config.production),
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 }
 
 export function clearSessionCookie(res: Response): void {
-  res.clearCookie(cookieName, { httpOnly: true, sameSite: "strict", secure: config.production, path: "/" });
+  res.clearCookie(cookieName, sessionCookieOptions(config.production));
 }

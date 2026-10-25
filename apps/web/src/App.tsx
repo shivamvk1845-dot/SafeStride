@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
   Activity, ArrowDownLeft, ArrowRight, Bell, Check, CheckCircle2, ChevronDown, Clock3,
@@ -11,7 +11,9 @@ import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import ExistingSafetyPlatform from "./ExistingSafetyPlatform";
 
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+const API = (import.meta.env.VITE_API_URL || (import.meta.env.PROD
+  ? "https://safestride-api.onrender.com"
+  : "http://localhost:4000")).replace(/\/+$/, "");
 type User = { id: string; name: string; email: string; timezone?: string; locationConsent?: boolean };
 type Contact = { id: string; name: string; email: string; phone?: string | null };
 type Journey = {
@@ -112,15 +114,23 @@ function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const gpsLocationRevision = useRef(0);
   const navigate = useNavigate();
   const refresh = useCallback(async () => {
+    const locationRevisionAtRequest = gpsLocationRevision.current;
     try {
       const [activeResult, historyResult, contactResult] = await Promise.all([
         api<{ journey: Journey | null }>("/journeys/active"),
         api<{ journeys: Journey[] }>("/journeys"),
         api<{ contacts: Contact[] }>("/contacts"),
       ]);
-      setActive(activeResult.journey);
+      setActive((current) => {
+        const journey = activeResult.journey;
+        if (journey && current?.id === journey.id && locationRevisionAtRequest !== gpsLocationRevision.current) {
+          return { ...journey, locations: current.locations };
+        }
+        return journey;
+      });
       setHistory(historyResult.journeys);
       setContacts(contactResult.contacts);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load your journeys."); }
@@ -130,23 +140,50 @@ function App() {
       .catch(() => setUser(null)).finally(() => setAuthReady(true));
   }, [refresh]);
   useEffect(() => {
-    if (!user || !active?.locationSharing || !navigator.geolocation) return;
+    if (!user || !active?.locationSharing || active.demo) return;
+    if (!navigator.geolocation) {
+      setError("Browser location is unavailable. Your journey and check-ins continue without location.");
+      return;
+    }
+    let cancelled = false;
     let lastSentAt = 0;
-    const watchId = navigator.geolocation.watchPosition(({ coords }) => {
+    const onPosition = ({ coords }: GeolocationPosition) => {
+      if (cancelled) return;
+      gpsLocationRevision.current += 1;
       if (Date.now() - lastSentAt < 30000) return;
       lastSentAt = Date.now();
       void api<{ location: Journey["locations"][number] }>(`/journeys/${active.id}/location`, {
         method: "POST",
         body: JSON.stringify({ latitude: coords.latitude, longitude: coords.longitude }),
-      }).then(({ location }) => setActive((current) => current?.id === active.id ? { ...current, locations: [location] } : current))
-        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Location update failed."));
-    }, () => setError("Location permission was unavailable. Check-ins continue to work without location."), {
-      enableHighAccuracy: true,
-      maximumAge: 15000,
-      timeout: 12000,
-    });
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [active?.id, active?.locationSharing, user]);
+      }).then(({ location }) => {
+        if (!cancelled) setActive((current) => current?.id === active.id ? { ...current, locations: [location] } : current);
+      })
+        .catch((reason: unknown) => {
+          if (!cancelled) setError(reason instanceof Error ? reason.message : "Location update failed.");
+        });
+    };
+    const onError = (reason: GeolocationPositionError) => {
+      if (cancelled) return;
+      setError(reason.code === reason.PERMISSION_DENIED
+        ? "Location permission was denied. Check-ins continue to work without location."
+        : "Browser location could not be obtained. Check-ins continue to work without location.");
+    };
+    let watchId: number;
+    try {
+      watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+        enableHighAccuracy: true,
+        maximumAge: 15000,
+        timeout: 12000,
+      });
+    } catch {
+      setError("Could not access browser location. Check-ins continue to work without location.");
+      return;
+    }
+    return () => {
+      cancelled = true;
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [active?.id, active?.locationSharing, active?.demo, user]);
   useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(""), 4500); return () => clearTimeout(timer); } }, [notice]);
   async function runAction(path: string, method = "POST", body?: unknown, message = "Updated.") {
     setError(""); setBusy(true);
@@ -187,6 +224,7 @@ function App() {
   }
   async function captureLocation() {
     if (!active || !navigator.geolocation) { setError("Location is unavailable in this browser."); return; }
+    if (active.demo) { setError("Browser GPS is not used in demo sessions."); return; }
     navigator.geolocation.getCurrentPosition(
       (position) => { void runAction(`/journeys/${active.id}/location`, "POST", { latitude: position.coords.latitude, longitude: position.coords.longitude }, "Location shared securely."); },
       () => setError("Location permission was unavailable. You can still check in without it."),

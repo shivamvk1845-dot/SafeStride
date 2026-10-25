@@ -17,7 +17,7 @@ SQLite is the zero-setup development database. It is durable across server resta
 4. Add a sample account and trusted contact: `npm run db:seed`
 5. Start API and web app: `npm run dev`
 6. Open <http://localhost:5173>. The API health check is <http://localhost:4000/api/health>.
-7. Run `npm test` and `npm run build`.
+7. Run `npm test`, `npm run test --workspace=@safestride/web`, and `npm run build`.
 
 The checked-in `.env.example` and `apps/api/.env.example` contain placeholders. For local use, copy the API example to `apps/api/.env`; keep its `DATABASE_URL` as `file:./dev.db`. The root example is for frontend build settings. Never use the example JWT secret in production.
 
@@ -39,8 +39,9 @@ The initial PostgreSQL migration is in `apps/api/prisma/migrations-postgresql`. 
 
 ## Application features
 
-- Server-side registration/login with salted bcrypt hashes, an HTTP-only SameSite session cookie, input validation, rate limiting, secure headers, and owner-scoped APIs.
+- Server-side registration/login with salted bcrypt hashes, an HTTP-only session cookie (`SameSite=None; Secure` for the cross-origin production frontend), exact-origin credentialed CORS, input validation, rate limiting, secure headers, and owner-scoped APIs.
 - Journey start, persisted check-ins and delays, safe arrival/cancellation, SOS event recording, optional GPS capture, recent journey history, and a last-known-position map using OpenStreetMap.
+- Starting and destination addresses are resolved with the public OpenStreetMap Nominatim service, and route previews use the public OpenStreetMap routing service. These services require internet access, no API key, and are not guaranteed; lookup or routing failures are shown instead of drawing a fabricated route.
 - Durable database-backed scheduled tasks for check-in reminders and grace-period escalation; the API worker polls tasks after startup and records unique notification attempts.
 - Trusted contact selection, authorization on guardian views, expiring/revocable SHA-256-hashed share links, and minimum-data public share responses.
 - Demo-only simulated check-in due, escalation, SOS, and arrival actions. Simulated events are identified as such and never contact emergency services.

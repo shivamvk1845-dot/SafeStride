@@ -16,6 +16,14 @@ app.disable("x-powered-by");
 if (config.production) app.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors({ origin: config.origin, credentials: true }));
+app.use((req, res, next) => {
+  const origin = req.get("Origin");
+  if (origin && origin !== config.origin) {
+    res.status(403).json({ error: "Origin not allowed." });
+    return;
+  }
+  next();
+});
 app.use(express.json({ limit: "32kb" }));
 app.use(cookieParser());
 app.use("/api", rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false }));

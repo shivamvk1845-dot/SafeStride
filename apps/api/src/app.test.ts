@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { app } from "./app.js";
 import { config, resolveWebOrigin } from "./config.js";
+import { sessionCookieOptions } from "./auth.js";
 import { prisma } from "./db.js";
 import { processDueTasks } from "./worker.js";
 
@@ -28,6 +29,31 @@ describe("SafeStride API", () => {
     expect(resolveWebOrigin("   ", true)).toBe("https://safestride-web.onrender.com");
   });
 
+  it("registers, restores, logs in, and logs out an authenticated session", async () => {
+    expect(sessionCookieOptions(true)).toMatchObject({ sameSite: "none", secure: true, httpOnly: true, path: "/" });
+    expect(sessionCookieOptions(false)).toMatchObject({ sameSite: "strict", secure: false, httpOnly: true, path: "/" });
+    expect((await request(app).get("/api/journeys")).status).toBe(401);
+
+    const restored = await request(app).get("/api/auth/me").set("Cookie", cookie);
+    expect(restored.status).toBe(200);
+    expect(restored.body.user.email).toBe(email);
+
+    const login = await request(app).post("/api/auth/login").send({
+      email, password: "correct-horse-battery-staple",
+    });
+    expect(login.status).toBe(200);
+    const loginCookie = login.headers["set-cookie"][0].split(";")[0];
+    expect(login.headers["set-cookie"][0]).toContain("HttpOnly");
+    expect(login.headers["set-cookie"][0]).toContain("SameSite=Strict");
+    expect((await request(app).get("/api/auth/me").set("Cookie", loginCookie)).status).toBe(200);
+
+    const logout = await request(app).post("/api/auth/logout").set("Cookie", loginCookie);
+    expect(logout.status).toBe(204);
+    expect(logout.headers["set-cookie"][0]).toContain("Expires=Thu, 01 Jan 1970");
+    expect((await request(app).get("/api/auth/me")).status).toBe(401);
+    expect((await request(app).get("/api/journeys").set("Cookie", cookie)).status).toBe(200);
+  });
+
   it("allows credentialed CORS preflight only from the configured web origin", async () => {
     const allowed = await request(app)
       .options("/api/auth/login")
@@ -49,6 +75,16 @@ describe("SafeStride API", () => {
     expect(rejected.status).toBe(204);
     expect(rejected.headers["access-control-allow-origin"]).toBe(config.origin);
     expect(rejected.headers["access-control-allow-origin"]).not.toBe(`${config.origin}.attacker.invalid`);
+  });
+
+  it("rejects credentialed requests from a different browser origin", async () => {
+    const rejected = await request(app)
+      .post("/api/auth/logout")
+      .set("Origin", "https://attacker.example")
+      .set("Cookie", cookie);
+
+    expect(rejected.status).toBe(403);
+    expect(rejected.body.error).toBe("Origin not allowed.");
   });
 
   it("requires authentication for private journeys", async () => {

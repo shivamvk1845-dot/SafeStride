@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { getRouteCoordinates, geocodeAddress, replaceMapLayers, type Coordinates } from './mapRouting';
 import { 
   Shield, ShieldAlert, ShieldCheck, AlertTriangle, Phone, 
   MapPin, Clock, Battery, Send, Navigation, Volume2, 
@@ -66,17 +67,6 @@ class SoundEngine {
 
 const audioFX = new SoundEngine();
 
-// Simulated route coordinates (Urban Corridor Route)
-const ROUTE_WAYPOINTS: [number, number][] = [
-  [12.9352, 77.6245], // Origin: Koramangala Sony Signal
-  [12.9405, 77.6288],
-  [12.9482, 77.6355],
-  [12.9567, 77.6412], // Intermediate Hub (Indiranagar 100ft Rd)
-  [12.9654, 77.6490],
-  [12.9716, 77.6582],
-  [12.9784, 77.6685]  // Destination: Tech Park / Hostel Gate
-];
-
 type EventLog = { time: string; text: string; status: 'info' | 'warning' | 'safe' | 'danger' };
 type TrustedContact = { id: string; name: string; email: string; phone?: string | null };
 type ApiJourney = {
@@ -98,7 +88,9 @@ type ApiJourney = {
   trustedContacts?: { trustedContact: TrustedContact }[];
 };
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+const API = (import.meta.env.VITE_API_URL || (import.meta.env.PROD
+  ? 'https://safestride-api.onrender.com'
+  : 'http://localhost:4000')).replace(/\/+$/, '');
 
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}/api${path}`, {
@@ -168,7 +160,7 @@ const PRESETS = [
     guardian: 'Dad (Kishore)',
     phone: '+91 94444 55566'
   }
-];
+] as const;
 
 export default function App() {
   // Navigation / View: 'setup' (default first screen) | 'traveler' | 'guardian'
@@ -180,7 +172,7 @@ export default function App() {
   // Journey Setup Parameters (User can configure in Setup screen)
   const [origin, setOrigin] = useState('Sony World Signal, 80ft Road');
   const [destination, setDestination] = useState('Hostel Block B (Tech Park Gate 3)');
-  const [transitType, setTransitType] = useState('cab'); // 'cab' | 'walk' | 'bus'
+  const [transitType, setTransitType] = useState<'cab' | 'walk' | 'bus'>('cab');
   const [vehiclePlate, setVehiclePlate] = useState('KA 05 MN 9214 • White Sedan');
   const [tripMinutes, setTripMinutes] = useState(25);
   const [checkInMinutes, setCheckInMinutes] = useState(8);
@@ -194,6 +186,11 @@ export default function App() {
   const [apiJourneyId, setApiJourneyId] = useState<string | null>(null);
   const [apiError, setApiError] = useState('');
   const [realPosition, setRealPosition] = useState<[number, number] | null>(null);
+  const [originPosition, setOriginPosition] = useState<Coordinates | null>(null);
+  const [destinationPosition, setDestinationPosition] = useState<Coordinates | null>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<Coordinates[]>([]);
+  const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [routeError, setRouteError] = useState('');
   const [lastLocationAt, setLastLocationAt] = useState<Date | null>(null);
   const [apiBusy, setApiBusy] = useState(false);
 
@@ -214,6 +211,7 @@ export default function App() {
   const [isDraggingSos, setIsDraggingSos] = useState(false);
   const sosTrackRef = useRef<HTMLDivElement | null>(null);
   const lastLocationSentAt = useRef(0);
+  const gpsLocationRevision = useRef(0);
 
   // Map DOM containers
   const travelerMapRef = useRef<HTMLDivElement | null>(null);
@@ -222,6 +220,11 @@ export default function App() {
   const guardianMapInstance = useRef<L.Map | null>(null);
   const travelerMarkerInstance = useRef<L.Marker | null>(null);
   const guardianMarkerInstance = useRef<L.Marker | null>(null);
+  const travelerJourneyLayers = useRef<L.LayerGroup | null>(null);
+  const guardianJourneyLayers = useRef<L.LayerGroup | null>(null);
+  const travelerDemoLayers = useRef<L.LayerGroup | null>(null);
+  const guardianDemoLayers = useRef<L.LayerGroup | null>(null);
+  const addressRequestId = useRef(0);
   const [leafletReady, setLeafletReady] = useState(false);
 
   // Battery detection API
@@ -299,9 +302,49 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const requestId = ++addressRequestId.current;
+    const controller = new AbortController();
+    setOriginPosition(null);
+    setDestinationPosition(null);
+    setRouteCoordinates([]);
+    setRouteError('');
+    if (!origin.trim() || !destination.trim()) {
+      setRouteStatus('idle');
+      return () => controller.abort();
+    }
+
+    setRouteStatus('loading');
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const start = await geocodeAddress(origin, controller.signal);
+          const end = await geocodeAddress(destination, controller.signal);
+          if (controller.signal.aborted || requestId !== addressRequestId.current) return;
+          setOriginPosition(start);
+          setDestinationPosition(end);
+          const route = await getRouteCoordinates(start, end, transitType, controller.signal);
+          if (controller.signal.aborted || requestId !== addressRequestId.current) return;
+          setRouteCoordinates(route);
+          setRouteStatus('ready');
+        } catch (reason) {
+          if (controller.signal.aborted || requestId !== addressRequestId.current) return;
+          setRouteError(reason instanceof Error ? reason.message : 'Could not update the map for these addresses.');
+          setRouteStatus('error');
+        }
+      })();
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [origin, destination, transitType]);
+
+  useEffect(() => {
     if (!apiJourneyId || demoMode) return;
     let cancelled = false;
     const refreshJourney = async () => {
+      const locationRevisionAtRequest = gpsLocationRevision.current;
       try {
         const { journey } = await apiRequest<{ journey: ApiJourney }>(`/journeys/${apiJourneyId}`);
         if (cancelled) return;
@@ -309,7 +352,7 @@ export default function App() {
         setCheckInSecondsLeft(Math.max(0, Math.ceil((new Date(journey.nextCheckInAt).getTime() - Date.now()) / 1000)));
         setGraceSecondsLeft(Math.max(0, Math.ceil((new Date(journey.nextCheckInAt).getTime() - Date.now()) / 1000)));
         setTripSecondsLeft(Math.max(0, Math.ceil((new Date(journey.expectedArrival).getTime() - Date.now()) / 1000)));
-        if (journey.locations[0]) {
+        if (journey.locations[0] && locationRevisionAtRequest === gpsLocationRevision.current) {
           setRealPosition([journey.locations[0].latitude, journey.locations[0].longitude]);
           setLastLocationAt(new Date(journey.locations[0].recordedAt));
         }
@@ -324,10 +367,18 @@ export default function App() {
   }, [apiJourneyId, demoMode]);
 
   useEffect(() => {
-    if (!apiJourneyId || demoMode || !locationSharing || !navigator.geolocation) return;
-    const watchId = navigator.geolocation.watchPosition(({ coords }) => {
+    if (!apiJourneyId || demoMode || !locationSharing) return;
+    if (!navigator.geolocation) {
+      setApiError('Browser location is unavailable. Your journey and check-ins continue without location.');
+      return;
+    }
+    let cancelled = false;
+    let watchId: number;
+    const onPosition = ({ coords }: GeolocationPosition) => {
+      if (cancelled) return;
       if (Date.now() - lastLocationSentAt.current < 30000) return;
       lastLocationSentAt.current = Date.now();
+      gpsLocationRevision.current += 1;
       const point: [number, number] = [coords.latitude, coords.longitude];
       setRealPosition(point);
       setLastLocationAt(new Date());
@@ -336,15 +387,28 @@ export default function App() {
         method: 'POST',
         body: JSON.stringify({ latitude: point[0], longitude: point[1] })
       }).catch((error: unknown) => setApiError(error instanceof Error ? error.message : 'Location update failed.'));
-    }, () => {
+    };
+    const onError = (reason: GeolocationPositionError) => {
+      if (cancelled) return;
       setTravelSpeed(null);
-      setApiError('Location permission was unavailable. Check-ins still work without location.');
-    }, {
-      enableHighAccuracy: true,
-      maximumAge: 15000,
-      timeout: 12000
-    });
-    return () => navigator.geolocation.clearWatch(watchId);
+      setApiError(reason.code === reason.PERMISSION_DENIED
+        ? 'Location permission was denied. Check-ins still work without location.'
+        : 'Browser location could not be obtained. Check-ins still work without location.');
+    };
+    try {
+      watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+        enableHighAccuracy: true,
+        maximumAge: 15000,
+        timeout: 12000
+      });
+    } catch {
+      setApiError('Could not access browser location. Check-ins still work without location.');
+      return;
+    }
+    return () => {
+      cancelled = true;
+      navigator.geolocation.clearWatch(watchId);
+    };
   }, [apiJourneyId, demoMode, locationSharing]);
 
   // Leaflet is bundled with the frontend, so maps do not depend on a remote script.
@@ -352,50 +416,46 @@ export default function App() {
     setLeafletReady(true);
   }, []);
 
-  // Compute interpolated GPS coordinates based on progressRatio
+  // Demo position follows the resolved route; browser GPS remains separate.
   const currentPos = useMemo<[number, number] | null>(() => {
     if (!demoMode) return realPosition;
-    const totalSegments = ROUTE_WAYPOINTS.length - 1;
+    if (routeCoordinates.length < 2) return null;
+    const totalSegments = routeCoordinates.length - 1;
     const scaled = Math.max(0, Math.min(1, progressRatio)) * totalSegments;
     const segIdx = Math.min(Math.floor(scaled), totalSegments - 1);
     const segProgress = scaled - segIdx;
 
-    const p1 = ROUTE_WAYPOINTS[segIdx];
-    const p2 = ROUTE_WAYPOINTS[segIdx + 1];
+    const p1 = routeCoordinates[segIdx];
+    const p2 = routeCoordinates[segIdx + 1];
 
     const lat = p1[0] + (p2[0] - p1[0]) * segProgress;
     const lng = p1[1] + (p2[1] - p1[1]) * segProgress;
     return [lat, lng];
-  }, [demoMode, progressRatio, realPosition]);
+  }, [demoMode, progressRatio, realPosition, routeCoordinates]);
+
+  const visibleSafeHavens = useMemo(() => {
+    if (!demoMode || routeCoordinates.length < 2) return [];
+    const bounds = L.latLngBounds(routeCoordinates).pad(0.1);
+    return SAFE_HAVENS.filter((haven) => bounds.contains([haven.lat, haven.lng]));
+  }, [demoMode, routeCoordinates]);
 
   // Leaflet Map Initialization using FREE Standard OpenStreetMap Tiles (NO API KEY REQUIRED)
   useEffect(() => {
     if (!leafletReady || activeTab === 'setup') return;
 
-    const createPulsedIcon = (color = '#14b8a6') => L.divIcon({
-      className: 'custom-pulse-marker',
-      html: `
-        <div style="position:relative; width:34px; height:34px; display:flex; align-items:center; justify-content:center;">
-          <div style="position:absolute; width:34px; height:34px; border-radius:50%; background:${color}33; animation:ping 1.5s cubic-bezier(0,0,0.2,1) infinite;"></div>
-          <div style="position:absolute; width:22px; height:22px; border-radius:50%; background:${color}; border:3px solid #0f172a; box-shadow:0 0 14px ${color}; display:flex; align-items:center; justify-content:center;">
-            <div style="width:6px; height:6px; border-radius:50%; background:#ffffff;"></div>
-          </div>
-        </div>
-      `,
-      iconSize: [34, 34],
-      iconAnchor: [17, 17]
-    });
-
     const initMap = (
       containerEl: HTMLDivElement | null,
       mapRef: React.MutableRefObject<L.Map | null>,
-      markerRef: React.MutableRefObject<L.Marker | null>
+      markerRef: React.MutableRefObject<L.Marker | null>,
+      journeyLayersRef: React.MutableRefObject<L.LayerGroup | null>,
+      demoLayersRef: React.MutableRefObject<L.LayerGroup | null>
     ) => {
       if (!containerEl || mapRef.current) return;
 
+      const initialPosition = currentPos ?? originPosition ?? ([20, 0] as L.LatLngTuple);
       const map = L.map(containerEl, {
-        center: currentPos ?? ([20, 0] as L.LatLngTuple),
-        zoom: currentPos ? 14 : 2,
+        center: initialPosition,
+        zoom: currentPos || originPosition ? 14 : 2,
         zoomControl: false,
         attributionControl: true
       });
@@ -405,98 +465,108 @@ export default function App() {
         maxZoom: 19,
         attribution: '&copy; OpenStreetMap contributors'
       }).addTo(map);
-
-      // Route polyline
-      if (demoMode) L.polyline(ROUTE_WAYPOINTS, {
-        color: '#0d9488',
-        weight: 6,
-        opacity: 0.85,
-        lineCap: 'round',
-        lineJoin: 'round'
-      }).addTo(map);
-
-      if (demoMode) L.polyline(ROUTE_WAYPOINTS, {
-        color: '#2dd4bf',
-        weight: 3,
-        opacity: 0.95,
-        dashArray: '8, 8',
-        lineCap: 'round'
-      }).addTo(map);
-
-      // Origin Pin
-      if (demoMode) L.circleMarker(ROUTE_WAYPOINTS[0], {
-        radius: 7,
-        fillColor: '#64748b',
-        fillOpacity: 1,
-        color: '#ffffff',
-        weight: 2
-      }).bindTooltip('Origin: ' + origin, { permanent: false, direction: 'top' }).addTo(map);
-
-      // Destination Pin
-      if (demoMode) L.circleMarker(ROUTE_WAYPOINTS[ROUTE_WAYPOINTS.length - 1], {
-        radius: 8,
-        fillColor: '#10b981',
-        fillOpacity: 1,
-        color: '#ffffff',
-        weight: 2
-      }).bindTooltip('Destination: ' + destination, { permanent: false, direction: 'top' }).addTo(map);
-
-      // Safe Havens markers
-      if (demoMode) SAFE_HAVENS.forEach(haven => {
-        const havenColor = haven.type === 'police' ? '#3b82f6' : haven.type === 'hospital' ? '#ef4444' : '#10b981';
-        const havenIcon = L.divIcon({
-          className: 'haven-marker',
-          html: `
-            <div style="background:${havenColor}; width:22px; height:22px; border-radius:50%; border:2px solid white; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,0.3); font-size:11px; color:white; font-weight:bold;">
-              ${haven.type === 'police' ? 'P' : haven.type === 'hospital' ? 'H' : 'S'}
-            </div>
-          `,
-          iconSize: [22, 22],
-          iconAnchor: [11, 11]
-        });
-
-        L.marker([haven.lat, haven.lng], { icon: havenIcon })
-          .bindTooltip(`<b>${haven.name}</b><br><span style="color:#64748b">Illustrative demo location • ${haven.dist}</span>`, { direction: 'top' })
-          .addTo(map);
-      });
-
-      // Traveler active position marker
-      const marker = currentPos
-        ? L.marker(currentPos, { icon: createPulsedIcon(activeTab === 'guardian' ? '#6366f1' : '#14b8a6') }).addTo(map)
-        : null;
-      marker?.bindTooltip(demoMode ? 'Simulated demo position' : 'Last GPS position reported by the browser', { permanent: false, direction: 'bottom' });
+      journeyLayersRef.current = L.layerGroup().addTo(map);
+      demoLayersRef.current = L.layerGroup().addTo(map);
 
       mapRef.current = map;
-      markerRef.current = marker;
+      markerRef.current = null;
     };
 
     if (activeTab === 'traveler') {
-      initMap(travelerMapRef.current, travelerMapInstance, travelerMarkerInstance);
+      initMap(travelerMapRef.current, travelerMapInstance, travelerMarkerInstance, travelerJourneyLayers, travelerDemoLayers);
     }
     if (activeTab === 'guardian') {
-      initMap(guardianMapRef.current, guardianMapInstance, guardianMarkerInstance);
+      initMap(guardianMapRef.current, guardianMapInstance, guardianMarkerInstance, guardianJourneyLayers, guardianDemoLayers);
     }
 
-    setTimeout(() => {
+    const timer = window.setTimeout(() => {
       travelerMapInstance.current?.invalidateSize();
       guardianMapInstance.current?.invalidateSize();
     }, 250);
+    return () => window.clearTimeout(timer);
+  }, [leafletReady, activeTab]);
 
-  }, [leafletReady, activeTab, demoMode]);
-
-  // Synchronize traveler marker position when moving
   useEffect(() => {
-    if (currentPos && travelerMapInstance.current && !travelerMarkerInstance.current) {
-      travelerMarkerInstance.current = L.marker(currentPos).addTo(travelerMapInstance.current);
-    } else if (currentPos && travelerMarkerInstance.current) {
-      travelerMarkerInstance.current.setLatLng(currentPos);
-    }
-    if (currentPos && guardianMapInstance.current && !guardianMarkerInstance.current) {
-      guardianMarkerInstance.current = L.marker(currentPos).addTo(guardianMapInstance.current);
-    } else if (currentPos && guardianMarkerInstance.current) {
-      guardianMarkerInstance.current.setLatLng(currentPos);
-    }
-  }, [currentPos]);
+    const updateMapLayers = (
+      map: L.Map | null,
+      journeyGroup: L.LayerGroup | null,
+      demoGroup: L.LayerGroup | null
+    ) => {
+      if (!map || !journeyGroup || !demoGroup) return;
+      const layers: L.Layer[] = [];
+      if (routeCoordinates.length > 1) {
+        layers.push(
+          L.polyline(routeCoordinates, {
+            color: '#0d9488', weight: 6, opacity: 0.85, lineCap: 'round', lineJoin: 'round'
+          }),
+          L.polyline(routeCoordinates, {
+            color: '#2dd4bf', weight: 3, opacity: 0.95, dashArray: '8, 8', lineCap: 'round', lineJoin: 'round'
+          })
+        );
+      }
+      if (originPosition) {
+        layers.push(L.circleMarker(originPosition, {
+          radius: 7, fillColor: '#64748b', fillOpacity: 1, color: '#ffffff', weight: 2
+        }).bindTooltip(`Starting address: ${origin}`, { direction: 'top' }));
+      }
+      if (destinationPosition) {
+        layers.push(L.circleMarker(destinationPosition, {
+          radius: 8, fillColor: '#10b981', fillOpacity: 1, color: '#ffffff', weight: 2
+        }).bindTooltip(`Destination: ${destination}`, { direction: 'top' }));
+      }
+      replaceMapLayers(journeyGroup, layers);
+
+      const demoLayers = visibleSafeHavens.map((haven) => {
+        const color = haven.type === 'police' ? '#3b82f6' : haven.type === 'hospital' ? '#ef4444' : '#10b981';
+        const icon = L.divIcon({
+          className: 'haven-marker',
+          html: `<div style="background:${color}; width:22px; height:22px; border-radius:50%; border:2px solid white; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 6px rgba(0,0,0,0.3); font-size:11px; color:white; font-weight:bold;">${haven.type === 'police' ? 'P' : haven.type === 'hospital' ? 'H' : 'S'}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11]
+        });
+        return L.marker([haven.lat, haven.lng], { icon })
+          .bindTooltip(`<b>${haven.name}</b><br><span style="color:#64748b">Illustrative demo location • ${haven.dist}</span>`);
+      });
+      replaceMapLayers(demoGroup, demoLayers);
+
+      const boundsPoints = routeCoordinates.length > 1
+        ? routeCoordinates
+        : [originPosition, destinationPosition].filter((point): point is Coordinates => point !== null);
+      if (boundsPoints.length > 0) map.fitBounds(L.latLngBounds(boundsPoints).pad(0.1), { maxZoom: 14 });
+    };
+
+    updateMapLayers(travelerMapInstance.current, travelerJourneyLayers.current, travelerDemoLayers.current);
+    updateMapLayers(guardianMapInstance.current, guardianJourneyLayers.current, guardianDemoLayers.current);
+  }, [routeCoordinates, originPosition, destinationPosition, origin, destination, visibleSafeHavens, activeTab, leafletReady]);
+
+  useEffect(() => {
+    const updatePositionMarker = (
+      map: L.Map | null,
+      markerRef: React.MutableRefObject<L.Marker | null>,
+      color: string
+    ) => {
+      if (!map) return;
+      if (!currentPos) {
+        markerRef.current?.remove();
+        markerRef.current = null;
+        return;
+      }
+      const icon = L.divIcon({
+        className: 'custom-pulse-marker',
+        html: `<div style="position:relative; width:34px; height:34px; display:flex; align-items:center; justify-content:center;"><div style="position:absolute; width:34px; height:34px; border-radius:50%; background:${color}33; animation:ping 1.5s cubic-bezier(0,0,0.2,1) infinite;"></div><div style="position:absolute; width:22px; height:22px; border-radius:50%; background:${color}; border:3px solid #0f172a; box-shadow:0 0 14px ${color};"></div></div>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17]
+      });
+      if (!markerRef.current) markerRef.current = L.marker(currentPos, { icon }).addTo(map);
+      else markerRef.current.setLatLng(currentPos).setIcon(icon);
+      markerRef.current.bindTooltip(demoMode ? 'Simulated position on the resolved route' : 'Browser GPS position', {
+        permanent: false, direction: 'bottom'
+      });
+    };
+
+    updatePositionMarker(travelerMapInstance.current, travelerMarkerInstance, '#14b8a6');
+    updatePositionMarker(guardianMapInstance.current, guardianMarkerInstance, '#6366f1');
+  }, [currentPos, demoMode, activeTab, leafletReady]);
 
   // Main safety countdown and escalation engine
   useEffect(() => {
@@ -568,6 +638,12 @@ export default function App() {
 
   const handleStartSession = async (forceDemo = demoMode): Promise<string | null> => {
     if (apiJourneyId) return apiJourneyId;
+    if (!origin.trim() || !destination.trim()) {
+      const message = 'Enter both a starting location and a destination.';
+      setRouteError(message);
+      setApiError(message);
+      return null;
+    }
     setApiError('');
     setApiBusy(true);
     try {
@@ -595,21 +671,6 @@ export default function App() {
       setActiveTab('traveler');
       setDemoMode(forceDemo);
       addEvent(`Protected ${forceDemo ? 'demo' : 'journey'} session started to ${destination}.`, 'info');
-      if (!forceDemo && locationSharing && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(({ coords }) => {
-          const point: [number, number] = [coords.latitude, coords.longitude];
-          setRealPosition(point);
-          setLastLocationAt(new Date());
-          setTravelSpeed(coords.speed === null ? null : Math.round(coords.speed * 3.6));
-          void apiRequest(`/journeys/${journey.id}/location`, {
-            method: 'POST',
-            body: JSON.stringify({ latitude: point[0], longitude: point[1] })
-          }).catch((error: unknown) => setApiError(error instanceof Error ? error.message : 'Location update failed.'));
-        }, () => {
-          setTravelSpeed(null);
-          setApiError('Location permission was unavailable. Your check-ins remain active.');
-        }, { timeout: 10000 });
-      }
       if (!isAudioMuted) audioFX.playChime();
       return journey.id;
     } catch (error) {
@@ -1030,6 +1091,9 @@ export default function App() {
                     className="w-full bg-slate-950 border border-slate-800 focus:border-teal-500 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-white placeholder-slate-600 outline-none transition"
                   />
                 </div>
+                {routeStatus === 'loading' && <p className="text-[11px] text-slate-400" role="status">Finding these addresses and updating the route…</p>}
+                {routeStatus === 'ready' && <p className="text-[11px] text-teal-300" role="status">Address markers and route updated.</p>}
+                {routeStatus === 'error' && <p className="text-[11px] text-rose-300" role="alert">{routeError}</p>}
               </div>
 
               {/* Transit Mode Selection */}
@@ -1452,33 +1516,35 @@ export default function App() {
                 <div className="absolute top-3 left-3 z-20 bg-slate-950/85 backdrop-blur-md border border-slate-800 p-2.5 rounded-2xl flex items-center space-x-3 text-xs shadow-lg">
                   <div className="flex items-center space-x-1.5 text-teal-400">
                     <Radio className="w-3.5 h-3.5 animate-pulse" />
-                    <span className="font-semibold">{demoMode ? 'Simulated Demo Route' : currentPos ? 'Last Browser GPS Report' : 'Location Unavailable'}</span>
+                    <span className="font-semibold">{demoMode ? currentPos ? 'Simulated Route Position' : 'Demo Route Unavailable' : currentPos ? 'Browser GPS Position' : 'Address Route · GPS Off'}</span>
                   </div>
                   <span className="text-slate-600">|</span>
                   <div className="text-slate-300 font-mono text-[11px]">
                     {currentPos ? `${currentPos[0].toFixed(4)}°, ${currentPos[1].toFixed(4)}°` : 'No location report'}
                   </div>
                 </div>
+                {routeStatus === 'loading' && <div className="absolute top-16 left-3 z-20 rounded-xl bg-slate-950/90 border border-slate-700 px-3 py-2 text-xs text-slate-300" role="status">Updating address route…</div>}
+                {routeStatus === 'error' && <div className="absolute top-16 left-3 z-20 max-w-[80%] rounded-xl bg-rose-950/95 border border-rose-500/60 px-3 py-2 text-xs text-rose-200" role="alert">{routeError}</div>}
 
                 {/* Map Legend Overlay */}
                 <div className="absolute bottom-3 right-3 z-20 bg-slate-950/85 backdrop-blur-md border border-slate-800 p-2.5 rounded-2xl text-[11px] space-y-1 shadow-lg hidden sm:block">
-                  <div className="font-semibold text-slate-200">{demoMode ? 'Illustrative demo places (unverified):' : 'No verified safe-place data available'}</div>
-                  <div className="flex items-center space-x-2 text-slate-300">
+                  <div className="font-semibold text-slate-200">{visibleSafeHavens.length ? 'Illustrative demo places (unverified):' : 'No verified safe-place data available'}</div>
+                  {visibleSafeHavens.length > 0 && <div className="flex items-center space-x-2 text-slate-300">
                     <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
                     <span>Police & Women Kiosk</span>
-                  </div>
-                  <div className="flex items-center space-x-2 text-slate-300">
+                  </div>}
+                  {visibleSafeHavens.length > 0 && <div className="flex items-center space-x-2 text-slate-300">
                     <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
                     <span>24/7 Hospital & Clinic</span>
-                  </div>
+                  </div>}
                 </div>
 
               </div>
 
               {/* Demonstration Safe Havens Strip */}
-              {demoMode && <p className="text-[10px] text-amber-300">Illustrative demo places only — not verified or endorsed. Check local sources for real services.</p>}
+              {visibleSafeHavens.length > 0 && <p className="text-[10px] text-amber-300">Illustrative demo places only — not verified or endorsed. Check local sources for real services.</p>}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {demoMode && SAFE_HAVENS.map(haven => (
+                {visibleSafeHavens.map(haven => (
                   <div 
                     key={haven.id} 
                     className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition flex items-center justify-between"
