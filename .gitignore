@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+!apps/api/.env.example
+apps/api/prisma/dev.db
+apps/api/prisma/dev.db-journal
+coverage/
+.DS_Store
+
+# TypeScript build cache
+*.tsbuildinfo

@@ -1,0 +1,140 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum JourneyStatus {
+  RUNNING
+  CHECKIN_DUE
+  GRACE_PERIOD
+  ESCALATED
+  SOS
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id                  String           @id @default(cuid())
+  name                String
+  email               String           @unique
+  passwordHash        String
+  timezone            String           @default("UTC")
+  locationConsent     Boolean          @default(false)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  contacts            TrustedContact[]
+  journeys            Journey[]
+}
+
+model TrustedContact {
+  id        String   @id @default(cuid())
+  ownerId   String
+  name      String
+  email     String
+  phone     String?
+  createdAt DateTime @default(now())
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  journeys  JourneyTrustedContact[]
+  @@unique([ownerId, email])
+}
+
+model JourneyTrustedContact {
+  journeyId       String
+  trustedContactId String
+  journey         Journey       @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  trustedContact  TrustedContact @relation(fields: [trustedContactId], references: [id], onDelete: Cascade)
+  @@id([journeyId, trustedContactId])
+}
+
+model Journey {
+  id                String            @id @default(cuid())
+  userId            String
+  origin            String
+  destination       String
+  mode              String
+  vehicleDetails    String?
+  startedAt         DateTime          @default(now())
+  expectedArrival   DateTime
+  endedAt           DateTime?
+  checkInMinutes    Int
+  graceMinutes      Int
+  nextCheckInAt     DateTime
+  status            JourneyStatus     @default(RUNNING)
+  locationSharing   Boolean           @default(false)
+  demo              Boolean           @default(false)
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  locations         JourneyLocation[]
+  checkIns          CheckIn[]
+  events            JourneyEvent[]
+  notifications     Notification[]
+  shareTokens       ShareToken[]
+  scheduledTasks    ScheduledTask[]
+  trustedContacts  JourneyTrustedContact[]
+  @@index([userId, startedAt])
+  @@index([status, nextCheckInAt])
+}
+
+model JourneyLocation {
+  id         String   @id @default(cuid())
+  journeyId  String
+  latitude   Float
+  longitude  Float
+  recordedAt DateTime @default(now())
+  journey    Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  @@index([journeyId, recordedAt])
+}
+
+model CheckIn {
+  id        String   @id @default(cuid())
+  journeyId String
+  kind      String
+  message   String?
+  createdAt DateTime @default(now())
+  journey   Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+}
+
+model JourneyEvent {
+  id        String   @id @default(cuid())
+  journeyId String
+  type      String
+  details   String?
+  simulated Boolean  @default(false)
+  createdAt DateTime @default(now())
+  journey   Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  @@index([journeyId, createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  journeyId String
+  recipient String
+  kind      String
+  status    String
+  provider  String
+  createdAt DateTime @default(now())
+  journey   Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  @@unique([journeyId, recipient, kind])
+}
+
+model ShareToken {
+  id        String   @id @default(cuid())
+  journeyId String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  journey   Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+}
+
+model ScheduledTask {
+  id          String   @id @default(cuid())
+  journeyId   String
+  kind        String
+  runAt       DateTime
+  processedAt DateTime?
+  journey     Journey  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  @@index([processedAt, runAt])
+}
