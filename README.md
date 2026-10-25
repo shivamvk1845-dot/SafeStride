@@ -90,16 +90,16 @@ Inputs are validated with Zod. The API returns JSON errors with appropriate HTTP
 2. Configure the API build command:
 
    ```text
-   npm ci --include=dev && npm run db:generate:postgres --workspace=@safestride/api && npm run build --workspace=@safestride/api
+   npm ci --include=dev && npm run db:generate:postgres --workspace=@safestride/api && npm run build --workspace=@safestride/api && npm prune --omit=dev
    ```
 
 3. Configure the pre-deploy command:
 
    ```text
-   npm run db:migrate:postgres:deploy --workspace=@safestride/api
+   npm ci --include=dev && npm run db:migrate:postgres:deploy --workspace=@safestride/api
    ```
 
-   This applies only the PostgreSQL migration history. Do not run `migrate dev` in production.
+   This installs the Prisma CLI needed for migrations in Render's separate pre-deploy environment and applies only the PostgreSQL migration history. Do not run `migrate dev` in production.
 4. Configure the start command:
 
    ```text
